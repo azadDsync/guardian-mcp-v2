@@ -1,0 +1,13 @@
+{
+  "name": "guardian-safety-mcp",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Guardian Safety MCP - Algorithmic safety scoring engine",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "guardian-weather-mcp",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Guardian Weather MCP - OpenWeather integration",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "node-fetch": "^3.3.2"
+  }
+}

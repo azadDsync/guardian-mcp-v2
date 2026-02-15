@@ -1,0 +1,35 @@
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.git
+.gitignore
+*.md
+.vscode
+.idea
+*.log
+node_modules
+package.json
+.dockerignore/
+*.pyc
+*.pyo
+*.egg-info/
+.Python
+venv/
+env/
+
+# YOLO
+runs/
+weights/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

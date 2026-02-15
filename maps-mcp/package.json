@@ -1,0 +1,14 @@
+{
+  "name": "guardian-maps-mcp",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Guardian Maps MCP - Google Maps walking routes",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "node-fetch": "^3.3.2"
+  }
+}

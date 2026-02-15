@@ -1,0 +1,18 @@
+{
+  "name": "guardian-vision-mcp",
+  "version": "2.0.0",
+  "description": "Guardian Vision MCP - Hybrid YOLO + Ollama Vision for hazard detection",
+  "type": "module",
+  "scripts": {
+    "start": "python index.py"
+  },
+  "keywords": [
+    "mcp",
+    "vision",
+    "yolo",
+    "ollama",
+    "safety"
+  ],
+  "author": "Guardian MCP",
+  "license": "MIT"
+}

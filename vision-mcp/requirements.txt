@@ -1,0 +1,10 @@
+ultralytics==8.3.0
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.5.1+cpu
+torchvision==0.20.1+cpu
+transformers==4.46.3
+einops==0.8.0
+Pillow==10.4.0
+requests==2.32.3
+mcp==1.1.2
+accelerate==1.2.1
