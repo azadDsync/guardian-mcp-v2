@@ -15,6 +15,8 @@ Guardian MCP provides intelligent pedestrian safety assessment by:
 - **Safety Scoring**: Algorithmic 0-100 safety score with transparent reasoning
 
 ### Example Interaction
+<img width="1777" height="959" alt="Screenshot from 2026-02-16 19-34-40" src="https://github.com/user-attachments/assets/f78574b6-5ea7-400a-ab93-48a5045dcb1a" />
+<img width="1777" height="959" alt="Screenshot from 2026-02-16 19-34-50" src="https://github.com/user-attachments/assets/383cfb07-4053-425e-9bb5-4166efa5c8aa" />
 
 ```
 👤 User: I'm at 40.7128, -74.0060. Take me to 40.7580, -73.9855. It's 10 PM.
