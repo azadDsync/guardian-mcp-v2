@@ -40,22 +40,50 @@ class VisionServer {
     });
   }
 
-  async analyzeImageWithGoogleVision(imageUrl) {
+  async analyzeImageWithGoogleVision(imageInput) {
     const url = `https://vision.googleapis.com/v1/images:annotate?key=${this.apiKey}`;
+
+    let requestBody;
+    if (imageInput.startsWith('data:image/')) {
+      // Base64: extract data
+      const matches = imageInput.match(/^data:([^;]+);base64,(.*)$/);
+      if (!matches) {
+        throw new Error('Invalid base64 image format');
+      }
+      const base64Data = matches[2];
+      
+      // Size check (20MB max for Vision API)
+      if (base64Data.length > 20 * 1024 * 1024 * 4 / 3) {  // ~20MB decoded
+        throw new Error('Image too large (max 20MB)');
+      }
+
+      requestBody = {
+        requests: [{
+          image: { content: base64Data },  // Raw base64 content
+          features: [{ type: 'LABEL_DETECTION', maxResults: 20 }],
+        }],
+      };
+      console.error(`[Vision MCP] Processing base64 image (${base64Data.length} chars)`);
+    } else {
+      // URL
+      requestBody = {
+        requests: [{
+          image: { source: { imageUri: imageInput } },
+          features: [{ type: 'LABEL_DETECTION', maxResults: 20 }],
+        }],
+      };
+      console.error(`[Vision MCP] Processing URL: ${imageInput}`);
+    }
 
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        requests: [{
-          image: { source: { imageUri: imageUrl } },
-          features: [{ type: 'LABEL_DETECTION', maxResults: 20 }],
-        }],
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {
-      throw new Error(`Google Cloud Vision API error: ${response.statusText}`);
+      const errorText = await response.text();
+      throw new Error(`Google Cloud Vision API error: ${response.status} - ${errorText}`);
     }
 
     const data = await response.json();
@@ -81,6 +109,7 @@ class VisionServer {
       return maxScore;
     };
 
+    // Hazard detection rules (unchanged)
     if (labelTexts.includes('construction') || labelTexts.includes('barrier') || labelTexts.includes('caution') || labelTexts.includes('warning')) {
       hazards.push({
         type: 'construction',
@@ -149,13 +178,25 @@ class VisionServer {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: [{
         name: 'analyze_image',
-        description: 'Analyze an image for safety hazards using Google Cloud Vision',
+        description: 'Analyze an image for safety hazards using Google Cloud Vision. Supports URLs and base64 from chat uploads.',
         inputSchema: {
           type: 'object',
           properties: {
-            image_url: { type: 'string', description: 'URL of the image to analyze', format: 'uri' },
+            image_url: { 
+              type: 'string', 
+              description: 'Public URL of the image to analyze (preferred for web images)', 
+              format: 'uri' 
+            },
+            image_base64: { 
+              type: 'string', 
+              description: 'Base64-encoded image data: data:image/png;base64,... or raw base64 (for Archestra chat uploads)' 
+            },
+            image_mime_type: { 
+              type: 'string', 
+              description: 'MIME type if providing raw base64 (e.g., image/png). Defaults to image/png.' 
+            },
           },
-          required: ['image_url'],
+          required: ['image_url'],  // Keep backward compatible, base64 is optional fallback
         },
       }],
     }));
@@ -171,9 +212,24 @@ class VisionServer {
       try {
         const args = request.params.arguments;
         console.error(`[Vision MCP] Processing request ${correlationId}`);
-        console.error(`[Vision MCP] Image URL: ${args.image_url}`);
 
-        const hazards = await this.analyzeImageWithGoogleVision(args.image_url);
+        // Smart image source selection
+        let imageInput;
+        if (args.image_base64) {
+          // Archestra/chat format
+          imageInput = args.image_base64.startsWith('data:image/') 
+            ? args.image_base64 
+            : `data:${args.image_mime_type || 'image/png'};base64,${args.image_base64}`;
+          console.error(`[Vision MCP] Using base64 image`);
+        } else if (args.image_url) {
+          // URL format
+          imageInput = args.image_url;
+          console.error(`[Vision MCP] Using URL image: ${imageInput}`);
+        } else {
+          throw new Error('Must provide image_url or image_base64');
+        }
+
+        const hazards = await this.analyzeImageWithGoogleVision(imageInput);
 
         const result = {
           hazards,
@@ -181,6 +237,7 @@ class VisionServer {
           correlation_id: correlationId,
           timestamp: getCurrentTimestamp(),
           model_used: 'google-cloud-vision',
+          input_type: imageInput.startsWith('data:image/') ? 'base64' : 'url',
         };
 
         console.error(`[Vision MCP] Success: Found ${hazards.length} hazards in ${result.execution_time_ms}ms`);
@@ -190,7 +247,7 @@ class VisionServer {
         };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        console.error(`[Vision MCP] Error: ${errorMessage}`);
+        console.error(`[Vision MCP] Error ${correlationId}: ${errorMessage}`);
 
         return {
           content: [{
@@ -211,7 +268,7 @@ class VisionServer {
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error('Guardian Vision MCP server running on stdio');
+    console.error('🛡️ Guardian Vision MCP server running on stdio (URLs + Base64 support)');
   }
 }
 

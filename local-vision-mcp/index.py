@@ -2,9 +2,11 @@
 """
 Guardian Vision MCP - Hybrid Object Detection + Condition Analysis
 Combines YOLOv8 (physical hazards) + Moondream2 (environmental conditions)
+Runs heavy work in thread pool so stdio/event loop stays responsive (Archestra-friendly).
 """
 import asyncio
 import logging
+import os
 import sys
 import json
 from datetime import datetime
@@ -13,6 +15,9 @@ from mcp.types import Tool, TextContent
 from yolo_detector import YOLODetector
 from condition_analyzer import ConditionAnalyzer
 
+# Unbuffered stderr so orchestrators (e.g. Archestra) see logs immediately
+sys.stderr.reconfigure(line_buffering=True) if hasattr(sys.stderr, "reconfigure") else None
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -20,6 +25,9 @@ logging.basicConfig(
     stream=sys.stderr
 )
 logger = logging.getLogger('vision-mcp')
+
+# Tool timeout: first Moondream2 load can take 2-3 min; allow up to 5 min for Archestra
+VISION_TOOL_TIMEOUT_SEC = int(os.environ.get("VISION_TOOL_TIMEOUT_SEC", "300"))
 
 
 def generate_correlation_id():
@@ -38,6 +46,8 @@ class VisionMCPServer:
         logger.info("Guardian Vision MCP initialized")
         logger.info("  - YOLOv8: Physical object detection")
         logger.info("  - Moondream2: Environmental condition analysis")
+        logger.info("  - Tool timeout: %s s (set VISION_TOOL_TIMEOUT_SEC to override)", VISION_TOOL_TIMEOUT_SEC)
+        sys.stderr.flush()
     
     def setup_handlers(self):
         @self.server.list_tools()
@@ -50,28 +60,24 @@ class VisionMCPServer:
                         "Identifies: vehicles, construction equipment, obstacles, people, animals, signs. "
                         "Returns concrete objects with counts and mapped safety hazards."
                     ),
+                    # Plain object schema (no anyOf) for Archestra/Gemini install and validation
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "image_url": {
                                 "type": "string",
-                                "description": "URL of the image to analyze",
-                                "format": "uri"
+                                "description": "URL of the image to analyze. Provide image_url OR image_base64."
                             },
                             "image_base64": {
                                 "type": "string",
-                                "description": "Base64-encoded image data (data URL or raw base64)"
+                                "description": "Base64-encoded image (data URL or raw). Provide image_url OR image_base64."
                             },
                             "image_headers": {
                                 "type": "object",
                                 "description": "Optional headers for image_url requests",
                                 "additionalProperties": {"type": "string"}
                             }
-                        },
-                        "anyOf": [
-                            {"required": ["image_url"]},
-                            {"required": ["image_base64"]}
-                        ]
+                        }
                     }
                 ),
                 Tool(
@@ -81,28 +87,24 @@ class VisionMCPServer:
                         "Detects: lighting quality, weather visibility, wet surfaces, area maintenance, isolation. "
                         "Returns abstract environmental hazards affecting pedestrian safety."
                     ),
+                    # Plain object schema (no anyOf) for Archestra/Gemini install and validation
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "image_url": {
                                 "type": "string",
-                                "description": "URL of the image to analyze",
-                                "format": "uri"
+                                "description": "URL of the image to analyze. Provide image_url OR image_base64."
                             },
                             "image_base64": {
                                 "type": "string",
-                                "description": "Base64-encoded image data (data URL or raw base64)"
+                                "description": "Base64-encoded image (data URL or raw). Provide image_url OR image_base64."
                             },
                             "image_headers": {
                                 "type": "object",
                                 "description": "Optional headers for image_url requests",
                                 "additionalProperties": {"type": "string"}
                             }
-                        },
-                        "anyOf": [
-                            {"required": ["image_url"]},
-                            {"required": ["image_base64"]}
-                        ]
+                        }
                     }
                 )
             ]
@@ -121,63 +123,82 @@ class VisionMCPServer:
                 
                 image_ref = image_url or "<base64>"
                 logger.info(f"[{correlation_id}] Processing {name} for {image_ref}")
-                
+
+                # Run blocking vision work in thread so event loop stays responsive
+                # (avoids Archestra/stdio timeouts and keeps MCP connection alive)
                 if name == "detect_objects":
-                    result = self.yolo.detect(
-                        image_url=image_url,
-                        image_base64=image_base64,
-                        image_headers=image_headers
+                    result = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self.yolo.detect,
+                            image_url=image_url,
+                            image_base64=image_base64,
+                            image_headers=image_headers,
+                        ),
+                        timeout=VISION_TOOL_TIMEOUT_SEC,
                     )
                     result['correlation_id'] = correlation_id
                     result['timestamp'] = start_time.isoformat()
                     result['tool'] = 'yolo_detector'
-                    
+
                     logger.info(
                         f"[{correlation_id}] YOLO: "
                         f"{result['total_objects']} objects, "
                         f"{len(result['hazards'])} hazards, "
                         f"{result['detection_time_ms']}ms"
                     )
-                    
+
                     return [TextContent(
                         type="text",
                         text=json.dumps(result, indent=2)
                     )]
-                
+
                 elif name == "analyze_conditions":
-                    result = self.moondream.analyze(
-                        image_url=image_url,
-                        image_base64=image_base64,
-                        image_headers=image_headers
+                    result = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self.moondream.analyze,
+                            image_url=image_url,
+                            image_base64=image_base64,
+                            image_headers=image_headers,
+                        ),
+                        timeout=VISION_TOOL_TIMEOUT_SEC,
                     )
                     result['correlation_id'] = correlation_id
                     result['timestamp'] = start_time.isoformat()
                     result['tool'] = 'moondream2_vision'
-                    
+
                     logger.info(
                         f"[{correlation_id}] Moondream2: "
                         f"{len(result['hazards'])} hazards, "
                         f"{result['analysis_time_ms']}ms"
                     )
-                    
+
                     return [TextContent(
                         type="text",
                         text=json.dumps(result, indent=2)
                     )]
-                
+
                 else:
                     raise ValueError(f"Unknown tool: {name}")
                 
+            except asyncio.TimeoutError as e:
+                logger.error(f"[{correlation_id}] Tool timed out after {VISION_TOOL_TIMEOUT_SEC}s: {e}")
+                error_result = {
+                    'error': f"Tool timed out after {VISION_TOOL_TIMEOUT_SEC}s. First analyze_conditions call may load Moondream2 (2-3 min). Set VISION_TOOL_TIMEOUT_SEC=300 or higher.",
+                    'correlation_id': correlation_id,
+                    'timestamp': start_time.isoformat(),
+                    'execution_time_ms': int((datetime.now() - start_time).total_seconds() * 1000),
+                }
+                return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
             except Exception as e:
                 logger.error(f"[{correlation_id}] Error: {e}", exc_info=True)
-                
+
                 error_result = {
                     'error': str(e),
                     'correlation_id': correlation_id,
                     'timestamp': start_time.isoformat(),
                     'execution_time_ms': int((datetime.now() - start_time).total_seconds() * 1000)
                 }
-                
+
                 return [TextContent(
                     type="text",
                     text=json.dumps(error_result, indent=2)
@@ -188,7 +209,8 @@ class VisionMCPServer:
         from mcp.server.stdio import stdio_server
         
         async with stdio_server() as (read_stream, write_stream):
-            logger.info("Guardian Vision MCP server running on stdio")
+            logger.info("Guardian Vision MCP server running on stdio (Archestra-friendly)")
+            sys.stderr.flush()
             await self.server.run(
                 read_stream,
                 write_stream,

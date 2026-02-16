@@ -52,8 +52,13 @@ guardian-mcp-v2/
 │   ├── package.json
 │   └── Dockerfile
 │
-├── vision-mcp/         YOLOv8 + Moondream2 Vision 
-│   ├── index.py        MCP server (Python)
+├── vision-mcp/         Google Cloud Vision MCP (primary)
+│   ├── index.js        MCP server (Node.js, Cloud Vision API)
+│   ├── package.json
+│   └── Dockerfile
+│
+├── local-vision-mcp/   Local YOLOv8 + Moondream2 Vision (optional)
+│   ├── index.py                MCP server (Python)
 │   ├── yolo_detector.py        Object detection 
 │   ├── condition_analyzer.py   Environmental analysis 
 │   ├── requirements.txt        Python dependencies
@@ -67,11 +72,11 @@ guardian-mcp-v2/
 
 ### Technology Stack
 
-- **Language**: JavaScript (Maps, Weather, Safety) + Python (Vision)
-- **Runtime**: Node.js 20+ (JS services) + Python 3.11 (Vision)
-- **Vision AI**: 
-  - YOLOv8 Nano (Ultralytics) - Object detection
-  - Moondream2 (vikhyatk) - Environmental analysis
+- **Language**: JavaScript (Maps, Weather, Safety, Cloud Vision) + Python (Local Vision)
+- **Runtime**: Node.js 20+ (JS services + Google Cloud Vision MCP) + Python 3.11 (local YOLO+Moondream MCP)
+- **Vision AI**:
+  - **Cloud Vision**: Google Cloud Vision API (label detection) via `vision-mcp/`
+  - **Local Vision (optional)**: YOLOv8 Nano (Ultralytics) + Moondream2 (vikhyatk) via `local-vision-mcp/`
 - **Framework**: @modelcontextprotocol/sdk v1.0.4 (JS) + mcp v1.1.2 (Python)
 - **Transport**: stdio (JSON-RPC over stdin/stdout)
 - **Deployment**: Docker containers in Kubernetes
@@ -95,8 +100,18 @@ guardian-mcp-v2/
 3. Get API key from dashboard
 4. Free tier: 1000 calls/day
 
-#### Vision AI (YOLOv8 + Moondream2) - 100% FREE!
-**No setup required!** Models download automatically:
+#### Vision AI Options
+
+You can run Guardian with either **Google Cloud Vision** (fast, managed, requires API key) or an optional **local YOLOv8 + Moondream2** stack (100% local, heavier).
+
+##### A) Google Cloud Vision API (default `vision-mcp/`)
+
+- Requires a Google Cloud project + **Vision API** enabled
+- Uses `GOOGLE_CLOUD_VISION_API_KEY`
+- Has a generous free tier (see [Vision pricing](https://cloud.google.com/vision/pricing))
+
+##### B) Local Vision (YOLOv8 + Moondream2) - 100% FREE!
+**No external APIs required.** Models download automatically:
 - **YOLOv8 Nano** (~6MB) - Pre-downloaded during build
 - **Moondream2** (~1.6GB) - Downloads on first container start
 
@@ -109,9 +124,9 @@ guardian-mcp-v2/
 
 No API keys, no external services, runs entirely locally in the container.
 
-### 2. Hardware Requirements
+### 2. Hardware Requirements (Local Vision MCP)
 
-**Vision MCP** (optimized for CPU inference):
+**Local Vision MCP** (`local-vision-mcp/`, YOLOv8 + Moondream2, optimized for CPU inference):
 - **RAM**: 4GB minimum, 6GB recommended (for Moondream2 inference)
 - **Storage**: 3.5GB total (1.65GB image + 1.6GB model download + overhead)
 - **CPU**: 2+ cores recommended (inference ~300-800ms per image)
@@ -153,6 +168,12 @@ cd /home/azad/Desktop/Hackathon/guardian-mcp-v2
 ```
 
 ### Step 2: Load Images into Archestra's Kubernetes Cluster
+```bash
+cd /home/azad/Desktop/Hackathon/guardian-mcp-v2
+
+# load all 4 images to cluster
+./build-images.sh
+```
 
 **Important:** Archestra runs an embedded Kubernetes (KinD) cluster inside its Docker container. You need to load your custom images into this cluster.
 
@@ -212,7 +233,7 @@ Environment Variables:
 
 ---
 
-#### Server 3: Guardian Vision MCP (YOLOv8 + Moondream2)
+#### Server 3: Guardian Vision MCP (Google Cloud Vision)
 
 ```
 Display Name: Guardian Vision MCP
@@ -220,10 +241,11 @@ Docker Image: guardian-vision-mcp:latest
 Command: (leave empty)
 Arguments: (leave empty)
 Transport Type: stdio
-Environment Variables: (none required - runs 100% locally)
+Environment Variables:
+  - Key: GOOGLE_CLOUD_VISION_API_KEY
+    Value: [Paste your Google Cloud Vision API key here]
 
-💡 Note: This container is larger (~2GB) as it includes YOLOv8 + Moondream2 models.
-    No external API keys or services needed!
+💡 Note: This MCP uses Google Cloud Vision's LABEL_DETECTION under the hood. Fast, managed, and benefits from Google's infra. Local YOLO+Moondream2 Vision is available separately via the `local-vision-mcp/` directory if you want a 100% offline option.
 ```
 
 ---
@@ -302,77 +324,6 @@ The evaluate_safety tool returns a score from 0-100:
 
 ---
 
-## 🔍 Vision MCP: Hybrid Architecture Explained
-
-The Vision MCP provides **two complementary tools** for comprehensive hazard detection:
-
-### Tool 1: `detect_objects` (YOLO)
-**Technology:** YOLOv8 Nano - Ultralytics  
-**Speed:** ~200-500ms per image  
-**Detects Physical Objects:**
-
-| Category | Objects Detected | Hazard Type | Severity |
-|----------|------------------|-------------|----------|
-| 🚗 Vehicles | cars, trucks, buses, motorcycles | `traffic_risk` | 0.5-0.7 |
-| 🚧 Construction | cones, barriers, excavators | `construction` | 0.7 |
-| 🚶 People | person (5+ = crowding) | `crowding` | 0.4-0.8 |
-| 🐕 Animals | dogs, cats | `animal_hazard` | 0.3-0.5 |
-| 🛑 Signs | stop signs, traffic controls | `traffic_control` | 0.2 |
-
-**Output Example:**
-```json
-{
-  "objects": [
-    {"class": "car", "confidence": 0.89, "count": 3},
-    {"class": "person", "confidence": 0.85, "count": 12}
-  ],
-  "hazards": [
-    {"type": "traffic_risk", "severity": 0.6, "evidence": "3 car(s) detected"},
-    {"type": "crowding", "severity": 0.55, "evidence": "12 person(s) detected"}
-  ]
-}
-```
-
-### Tool 2: `analyze_conditions` (Moondream2 Vision)
-**Technology:** Moondream2 1.6B - Lightweight vision-language model  
-**Speed:** ~300-800ms per image (much faster than LLMs!)  
-**Detects Environmental Conditions:**
-
-| Category | Values | Hazard Type | Severity |
-|----------|--------|-------------|----------|
-| 💡 Lighting | well_lit, poorly_lit, dark | `poorly_lit` | 0.6-0.7 |
-| 🌧️ Weather | clear, wet_surface, rain, fog, snow | `wet_floor`, `low_visibility` | 0.5-0.7 |
-| 👁️ Visibility | good, moderate, poor | `low_visibility` | 0.65 |
-| 🏚️ Area Quality | well/avg/poorly_maintained | `area_neglect` | 0.45 |
-| 🏙️ Area Type | busy/quiet/isolated/residential | `isolation` | 0.55 |
-
-**Output Example:**
-```json
-{
-  "conditions": {
-    "lighting": "poorly_lit",
-    "weather_visible": "wet_surface",
-    "visibility": "moderate",
-    "area_quality": "poorly_maintained",
-    "area_type": "quiet_street"
-  },
-  "hazards": [
-    {"type": "poorly_lit", "severity": 0.6, "description": "Dark street with minimal lighting"},
-    {"type": "wet_floor", "severity": 0.5, "description": "Wet pavement from recent rain"}
-  ]
-}
-```
-
-### Why Two Tools?
-
-**YOLO** excels at detecting **concrete, physical objects** but cannot assess abstract conditions.  
-**Moondream2** understands **context and environment** but may miss small objects.  
-**Together** they provide comprehensive hazard detection combining speed (YOLO) and semantic understanding (Moondream2).
-
-**Cost:** $0 - Both run locally, no API fees!
-
----
-
 ## 🧪 Testing
 
 ### Test 1: End-to-End Route Assessment
@@ -440,83 +391,7 @@ In Archestra, check that tools are discoverable:
 }
 ```
 
-### Issue: "Image not found" in Kubernetes
 
-**Problem:** Archestra can't find `guardian-maps-mcp:latest`
-
-**Solution:**
-```bash
-# Check if images were loaded
-docker exec vigilant_payne docker images | grep guardian
-
-# If empty, reload images:
-docker exec vigilant_payne kind load docker-image guardian-maps-mcp:latest --name archestra-mcp
-```
-
-### Issue: MCP Server Crashes
-
-**Problem:** Server starts but immediately crashes
-
-**Solution:** Check environment variables are set correctly in Archestra UI
-
-**Debug locally:**
-```bash
-cd maps-mcp
-GOOGLE_MAPS_API_KEY=your-key-here node index.js
-# Should output: "[Maps MCP] Using Google Maps API"
-```
-
-### Issue: "API key invalid" errors
-
-**Problem:** APIs return 401/403 errors
-
-**Solution:**
-1. Verify API is enabled in Google Cloud Console
-2. Check API key has no restrictions
-3. Verify API key copied correctly (no extra spaces)
-
-### Issue: Agent doesn't call tools
-
-**Problem:** Agent responds without using MCP tools
-
-**Solution:**
-1. Verify gateway has all 4 MCP servers assigned
-2. Verify agent has the gateway assigned
-3. Check agent system prompt includes workflow instructions
-4. Try explicit prompt: "Use the get_walking_route tool to..."
-
-### Issue: Vision MCP - Slow performance
-
-**Problem:** Vision analysis takes too long
-
-**Solution:**
-```bash
-# Moondream2 runs locally in container - no external dependencies!
-# Should complete in ~300-800ms
-
-# If slow:
-# 1. Check Docker resources (increase RAM/CPU)
-# 2. Consider GPU passthrough for faster inference
-# 3. Models are downloaded during build, not runtime
-```
-
-### Issue: Vision MCP - Model download failed during build
-
-**Problem:** Docker build fails downloading YOLOv8 or Moondream2
-
-**Solution:**
-```bash
-# Ensure internet connection during build
-# Models are cached after first download
-
-cd vision-mcp
-docker build --no-cache -t guardian-vision-mcp:latest .
-
-# Reload into kind cluster
-docker exec <archestra-container> kind load docker-image guardian-vision-mcp:latest --name archestra-mcp
-```
-
----
 
 ## 📊 Safety Scoring Algorithm
 
@@ -581,6 +456,8 @@ The Guardian MCP system is designed with future mobile expansion in mind:
 - "High-risk time period starting - stay vigilant"
 
 ---
+
+
 
 ## 📚 Additional Resources
 

@@ -1,18 +1,14 @@
 {
   "name": "guardian-vision-mcp",
-  "version": "2.0.0",
-  "description": "Guardian Vision MCP - Hybrid YOLO + Ollama Vision for hazard detection",
+  "version": "1.0.0",
   "type": "module",
+  "description": "Guardian Vision MCP - Google Cloud Vision hazard detection",
+  "main": "index.js",
   "scripts": {
-    "start": "python index.py"
+    "start": "node index.js"
   },
-  "keywords": [
-    "mcp",
-    "vision",
-    "yolo",
-    "ollama",
-    "safety"
-  ],
-  "author": "Guardian MCP",
-  "license": "MIT"
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "node-fetch": "^3.3.2"
+  }
 }
